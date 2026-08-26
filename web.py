@@ -89,11 +89,13 @@ def pull():
 def ask():
     question = request.args.get("question", "").strip()
     k = _clamp("k", 5, 1, 20)
+    # read every arg here: the generator below runs after the request context is gone
+    wanted = request.args.get("topic") or None
     if not question:
         return stream(iter([sse(error="ask me something first")]))
 
     def steps() -> Iterator[str]:
-        topic = papers.current_topic(request.args.get("topic") or None)
+        topic = papers.current_topic(wanted)
 
         clock = time.time()
         docs, metas = papers.retrieve(question, topic, k)

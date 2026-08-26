@@ -128,7 +128,7 @@ def answer(question: str, docs: list[str]) -> str:
         base_url=os.environ.get("LLM_BASE_URL", "https://generativelanguage.googleapis.com/v1beta/openai/"),
     )
     reply = client.chat.completions.create(
-        model=os.environ.get("LLM_MODEL", "gemini-2.5-flash"),
+        model=os.environ.get("LLM_MODEL", "gemini-3.6-flash"),
         temperature=0,
         messages=[
             {
