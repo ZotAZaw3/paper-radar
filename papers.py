@@ -61,7 +61,8 @@ def parse(payload: dict) -> list[dict]:
     return papers
 
 
-def fetch(topic: str, rows: int, days: int) -> list[dict]:
+def fetch(topic: str, rows: int, days: int) -> dict:
+    """Raw Crossref payload. Callers run it through parse() - the web UI counts both."""
     params = {
         "query": topic,
         "rows": rows,
@@ -75,7 +76,7 @@ def fetch(topic: str, rows: int, days: int) -> list[dict]:
             problem = str(exc)
         else:
             if response.status_code == 200:
-                return parse(response.json())
+                return response.json()
             if response.status_code not in RETRY_CODES:
                 response.raise_for_status()
             problem = f"HTTP {response.status_code}"
@@ -102,26 +103,22 @@ def current_topic(topic: str | None) -> str:
     return marker.read_text(encoding="utf-8").strip()
 
 
-def pull(topic: str, rows: int, days: int) -> None:
-    papers = fetch(topic, rows, days)
-    if not papers:
-        raise SystemExit(f"crossref returned no usable papers for {topic!r} in the last {days} days")
-    # upsert by DOI: re-pulling a topic refreshes it instead of duplicating it
+def index(topic: str, papers: list[dict]) -> int:
+    """Embed and store. Upsert by DOI, so re-pulling a topic refreshes it instead of duplicating."""
     collection(topic).upsert(
         ids=[p["doi"] for p in papers],
         documents=[f"{p['title']}\n\n{p['abstract']}" for p in papers],
         metadatas=[{k: v for k, v in p.items() if k != "abstract"} for p in papers],
     )
-    print(f"{len(papers)} papers from the last {days} days indexed under {topic!r}")
+    return collection(topic).count()
 
 
-def ask(question: str, topic: str, k: int) -> None:
+def retrieve(question: str, topic: str, k: int) -> tuple[list[str], list[dict]]:
     hits = collection(topic).query(query_texts=[question], n_results=k)
-    docs, metas = hits["documents"][0], hits["metadatas"][0]
-    if not docs:
-        raise SystemExit(f"no papers indexed for {topic!r} - run pull first")
+    return hits["documents"][0], hits["metadatas"][0]
 
-    context = "\n\n".join(f"[{i}] {doc}" for i, doc in enumerate(docs, 1))
+
+def answer(question: str, docs: list[str]) -> str:
     load_dotenv(Path(__file__).parent / ".env")
     api_key = os.environ.get("LLM_API_KEY")
     if not api_key:
@@ -139,10 +136,29 @@ def ask(question: str, topic: str, k: int) -> None:
                 "content": "Answer only from the numbered paper abstracts. Cite them like [1]. "
                 "If they do not answer the question, say so instead of guessing.",
             },
-            {"role": "user", "content": f"{context}\n\nQuestion: {question}"},
+            {
+                "role": "user",
+                "content": "\n\n".join(f"[{i}] {doc}" for i, doc in enumerate(docs, 1))
+                + f"\n\nQuestion: {question}",
+            },
         ],
     )
-    print(f"\n{reply.choices[0].message.content}\n\nsources:")
+    return reply.choices[0].message.content
+
+
+def pull(topic: str, rows: int, days: int) -> None:
+    papers = parse(fetch(topic, rows, days))
+    if not papers:
+        raise SystemExit(f"crossref returned no usable papers for {topic!r} in the last {days} days")
+    total = index(topic, papers)
+    print(f"{len(papers)} papers from the last {days} days indexed under {topic!r} ({total} total)")
+
+
+def ask(question: str, topic: str, k: int) -> None:
+    docs, metas = retrieve(question, topic, k)
+    if not docs:
+        raise SystemExit(f"no papers indexed for {topic!r} - run pull first")
+    print(f"\n{answer(question, docs)}\n\nsources:")
     for i, meta in enumerate(metas, 1):
         print(f"  [{i}] {meta['title']} ({meta['published']})\n      {meta['url']}")
 

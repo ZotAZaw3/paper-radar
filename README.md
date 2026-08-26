@@ -29,6 +29,16 @@ cp .env.example .env    # then paste your key
 Defaults to Gemini via its OpenAI-compatible endpoint. Any OpenAI-compatible
 provider works — change `LLM_BASE_URL` and `LLM_MODEL` in `.env`.
 
+## Web UI
+
+```bash
+python web.py     # http://127.0.0.1:5000
+```
+
+Same pipeline, but each stage reports as it finishes — how many works Crossref
+returned, how many survived filtering, how many got embedded, which abstracts
+the question retrieved — so you can see where an answer came from.
+
 ## Usage
 
 | Command | What it does |

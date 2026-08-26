@@ -1,0 +1,190 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>paper-radar</title>
+<style>
+  :root {
+    --bg: #fbfaf8; --panel: #fff; --line: #e6e2db; --ink: #1b1a18;
+    --dim: #6f6a62; --accent: #3c6e57; --warn: #a8392c; --idle: #cfcac2;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #16181a; --panel: #1d2023; --line: #2e3236; --ink: #e8e6e3;
+      --dim: #9a958d; --accent: #79b596; --warn: #e08b7e; --idle: #3a3f44;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 2.5rem 1.25rem 4rem; background: var(--bg); color: var(--ink);
+    font: 15px/1.6 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  main { max-width: 720px; margin: 0 auto; }
+  h1 { font-size: 1.5rem; margin: 0 0 .25rem; letter-spacing: -.01em; }
+  h1 span { color: var(--accent); }
+  .sub { color: var(--dim); margin: 0 0 2rem; }
+  form { display: flex; gap: .5rem; margin-bottom: .75rem; flex-wrap: wrap; }
+  input {
+    flex: 1 1 16rem; min-width: 0; padding: .6rem .8rem; border: 1px solid var(--line);
+    border-radius: 8px; background: var(--panel); color: var(--ink); font: inherit;
+  }
+  input:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+  button {
+    padding: .6rem 1.1rem; border: 0; border-radius: 8px; background: var(--accent);
+    color: #fff; font: inherit; font-weight: 600; cursor: pointer;
+  }
+  button[disabled] { opacity: .5; cursor: progress; }
+  section { margin-top: 2.25rem; }
+  h2 { font-size: .78rem; text-transform: uppercase; letter-spacing: .09em; color: var(--dim); margin: 0 0 .75rem; }
+  ol.steps { list-style: none; margin: 0; padding: 0; }
+  ol.steps li {
+    display: grid; grid-template-columns: 1.5rem 1fr auto; gap: .65rem; align-items: baseline;
+    padding: .55rem 0; border-bottom: 1px solid var(--line); color: var(--dim);
+  }
+  ol.steps li:last-child { border-bottom: 0; }
+  li .dot {
+    width: .55rem; height: .55rem; border-radius: 50%; background: var(--idle); justify-self: center;
+  }
+  li .name { font-weight: 600; color: var(--dim); }
+  li .detail { grid-column: 2; color: var(--dim); font-size: .88rem; }
+  li .ms { font-variant-numeric: tabular-nums; font-size: .8rem; color: var(--dim); }
+  li[data-state="run"] .dot { background: var(--accent); animation: pulse 1s ease-in-out infinite; }
+  li[data-state="run"] .name, li[data-state="done"] .name { color: var(--ink); }
+  li[data-state="done"] .dot { background: var(--accent); }
+  li[data-state="fail"] .dot { background: var(--warn); }
+  @keyframes pulse { 50% { opacity: .25; } }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 1rem 1.15rem; }
+  .answer { white-space: pre-wrap; }
+  .answer b { color: var(--accent); }
+  ul.papers { list-style: none; margin: .9rem 0 0; padding: 0; }
+  ul.papers li { padding: .5rem 0; border-top: 1px solid var(--line); font-size: .9rem; }
+  ul.papers a { color: inherit; text-decoration: none; }
+  ul.papers a:hover { text-decoration: underline; }
+  ul.papers .meta { color: var(--dim); font-size: .82rem; }
+  .err { color: var(--warn); }
+  .hidden { display: none; }
+</style>
+</head>
+<body>
+<main>
+  <h1>paper<span>-</span>radar</h1>
+  <p class="sub">Pull recent papers on a topic from Crossref, then ask questions answered only from what got indexed.</p>
+
+  <form id="pull-form">
+    <input id="topic" placeholder="retrieval augmented generation" value="retrieval augmented generation" required>
+    <button id="pull-btn">Pull</button>
+  </form>
+
+  <section>
+    <h2>Step 1 &ndash; build the index</h2>
+    <ol class="steps" id="pull-steps">
+      <li data-step="fetch"><span class="dot"></span><span class="name">Crossref</span><span class="ms"></span>
+        <span class="detail">query the API for papers published in the last 180 days</span></li>
+      <li data-step="filter"><span class="dot"></span><span class="name">Filter</span><span class="ms"></span>
+        <span class="detail">drop records with no DOI, title, or usable abstract</span></li>
+      <li data-step="index"><span class="dot"></span><span class="name">Embed &amp; index</span><span class="ms"></span>
+        <span class="detail">MiniLM vectors upserted into a per-topic Chroma collection</span></li>
+    </ol>
+    <div id="pull-out" class="hidden"></div>
+  </section>
+
+  <section>
+    <h2>Step 2 &ndash; ask it something</h2>
+    <form id="ask-form">
+      <input id="question" placeholder="what evaluation metrics do they use?" required>
+      <button id="ask-btn">Ask</button>
+    </form>
+    <ol class="steps" id="ask-steps">
+      <li data-step="retrieve"><span class="dot"></span><span class="name">Retrieve</span><span class="ms"></span>
+        <span class="detail">nearest abstracts by cosine distance</span></li>
+      <li data-step="answer"><span class="dot"></span><span class="name">Answer</span><span class="ms"></span>
+        <span class="detail">the model sees only those abstracts and must cite them</span></li>
+    </ol>
+    <div id="ask-out" class="hidden"></div>
+  </section>
+</main>
+
+<script>
+const $ = (sel) => document.querySelector(sel);
+const esc = (s) => s.replace(/[&<>"]/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const papersList = (items) => `<ul class="papers">${items.map((p) =>
+  `<li><a href="${esc(p.url)}" target="_blank" rel="noopener">${esc(p.title)}</a>
+   <div class="meta">${esc(p.published || 'no date')}</div></li>`).join('')}</ul>`;
+
+// Drive one stepper off an SSE endpoint. Resolves when the stream ends.
+function run(url, listId, outId, render) {
+  const steps = [...document.querySelectorAll(`#${listId} li`)];
+  const out = $(`#${outId}`);
+  steps.forEach((li) => {
+    li.dataset.state = '';
+    li.querySelector('.ms').textContent = '';
+  });
+  out.classList.add('hidden');
+  out.innerHTML = '';
+  if (steps[0]) steps[0].dataset.state = 'run';
+
+  return new Promise((resolve) => {
+    const source = new EventSource(url);
+    let at = 0;
+    const finish = () => { source.close(); resolve(); };
+
+    source.onmessage = (event) => {
+      const msg = JSON.parse(event.data);
+      if (msg.error) {
+        if (steps[at]) steps[at].dataset.state = 'fail';
+        out.className = 'card err';
+        out.textContent = msg.error;
+        return finish();
+      }
+      if (msg.step) {
+        const li = steps.find((s) => s.dataset.step === msg.step);
+        if (li) {
+          li.dataset.state = 'done';
+          li.querySelector('.ms').textContent = msg.ms >= 1000 ? `${(msg.ms / 1000).toFixed(1)}s` : `${msg.ms}ms`;
+          at = steps.indexOf(li) + 1;
+          if (steps[at]) steps[at].dataset.state = 'run';
+        }
+        return;
+      }
+      if (msg.done) {
+        out.className = 'card';
+        out.innerHTML = render(msg);
+        out.classList.remove('hidden');
+        finish();
+      }
+    };
+    // A dead server looks the same as a finished stream; mark the running step and stop.
+    source.onerror = () => {
+      if (steps[at] && steps[at].dataset.state === 'run') {
+        steps[at].dataset.state = 'fail';
+        out.className = 'card err';
+        out.textContent = 'lost the connection to the server';
+        out.classList.remove('hidden');
+      }
+      finish();
+    };
+  });
+}
+
+async function submit(button, url, listId, outId, render) {
+  button.disabled = true;
+  await run(url, listId, outId, render);
+  button.disabled = false;
+}
+
+$('#pull-form').onsubmit = (e) => {
+  e.preventDefault();
+  submit($('#pull-btn'), `/pull?topic=${encodeURIComponent($('#topic').value)}`, 'pull-steps', 'pull-out',
+    (msg) => `<strong>Indexed.</strong> Newest of them:${papersList(msg.papers)}`);
+};
+
+$('#ask-form').onsubmit = (e) => {
+  e.preventDefault();
+  submit($('#ask-btn'), `/ask?question=${encodeURIComponent($('#question').value)}`, 'ask-steps', 'ask-out',
+    (msg) => `<div class="answer">${esc(msg.answer).replace(/\[(\d+)\]/g, '<b>[$1]</b>')}</div>
+              <h2 style="margin:1.2rem 0 0">Sources</h2>${papersList(msg.sources)}`);
+};
+</script>
+</body>
+</html>
